@@ -1,0 +1,33 @@
+{
+  "name": "follow-back-x",
+  "displayName": "Follow Back X",
+  "version": "0.0.1",
+  "description": "在 X 认证关注者页面高亮未互关用户",
+  "author": "",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "@tabler/icons-react": "^3.23.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.277",
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "plasmo": "^0.90.0",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3"
+  },
+  "manifest": {
+    "permissions": ["storage"],
+    "host_permissions": ["https://x.com/*"]
+  }
+}
