@@ -2,7 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --background: #1a1b1e;
+  --foreground: #f0f0f0;
+  --card: #222327;
+  --card-foreground: #f0f0f0;
+  --popover: #222327;
+  --popover-foreground: #f0f0f0;
+  --primary: #8c5cff;
+  --primary-foreground: #ffffff;
+  --secondary: #2a2c33;
+  --secondary-foreground: #f0f0f0;
+  --muted: #2a2c33;
+  --muted-foreground: #a0a0a0;
+  --accent: #1e293b;
+  --accent-foreground: #79c0ff;
+  --destructive: #f87171;
+  --destructive-foreground: #ffffff;
+  --border: #33353a;
+  --input: #33353a;
+  --ring: #8c5cff;
+  --chart-1: #4ade80;
+  --chart-2: #8c5cff;
+  --chart-3: #fca5a5;
+  --chart-4: #5993f4;
+  --chart-5: #a0a0a0;
+  --sidebar: #161618;
+  --sidebar-foreground: #f0f0f0;
+  --sidebar-primary: #8c5cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #2a2c33;
+  --sidebar-accent-foreground: #8c5cff;
+  --sidebar-border: #33353a;
+  --sidebar-ring: #8c5cff;
+  --font-sans: Plus Jakarta Sans, sans-serif;
+  --font-serif: Lora, serif;
+  --font-mono: IBM Plex Mono, monospace;
+  --radius: 1.4rem;
+  --shadow-x: 0px;
+  --shadow-y: 2px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.16;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-2xs: 0px 2px 3px 0px hsl(0 0% 0% / 0.08);
+  --shadow-xs: 0px 2px 3px 0px hsl(0 0% 0% / 0.08);
+  --shadow-sm: 0px 2px 3px 0px hsl(0 0% 0% / 0.16),
+    0px 1px 2px -1px hsl(0 0% 0% / 0.16);
+  --shadow: 0px 2px 3px 0px hsl(0 0% 0% / 0.16),
+    0px 1px 2px -1px hsl(0 0% 0% / 0.16);
+  --shadow-md: 0px 2px 3px 0px hsl(0 0% 0% / 0.16),
+    0px 2px 4px -1px hsl(0 0% 0% / 0.16);
+  --shadow-lg: 0px 2px 3px 0px hsl(0 0% 0% / 0.16),
+    0px 4px 6px -1px hsl(0 0% 0% / 0.16);
+  --shadow-xl: 0px 2px 3px 0px hsl(0 0% 0% / 0.16),
+    0px 8px 10px -1px hsl(0 0% 0% / 0.16);
+  --shadow-2xl: 0px 2px 3px 0px hsl(0 0% 0% / 0.4);
+  --tracking-normal: -0.025em;
+  --spacing: 0.27rem;
+}
+
 body {
-  width: 320px;
-  min-height: 200px;
+  letter-spacing: var(--tracking-normal);
+  width: 360px;
+  min-height: 600px;
+  background: var(--background);
+  color: var(--foreground);
+  padding-bottom: 80px;
 }

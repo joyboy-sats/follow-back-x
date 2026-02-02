@@ -1,7 +1,7 @@
 {
   "name": "follow-back-x",
   "displayName": "Follow Back X",
-  "version": "0.0.1",
+  "version": "1.0.1",
   "description": "在 X 认证关注者页面高亮未互关用户",
   "author": "",
   "scripts": {
