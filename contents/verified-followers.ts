@@ -1,6 +1,10 @@
 import type { PlasmoCSConfig } from "plasmo"
-import type { UnfollowUser } from "~types"
-import { UNFOLLOW_STORAGE_KEY } from "~types"
+import type { IgnoredUser, UnfollowUser } from "~types"
+import {
+  CURRENT_ACCOUNT_STORAGE_KEY,
+  IGNORED_STORAGE_KEY,
+  UNFOLLOW_STORAGE_KEY,
+} from "~types"
 
 export const config: PlasmoCSConfig = {
   matches: ["https://x.com/*"],
@@ -98,6 +102,47 @@ function hasFollowsYouLabel(cell: Element): boolean {
   return FOLLOWS_YOU_LABELS.some((label) => text.includes(label))
 }
 
+function getAvatarUrl(cell: Element): string {
+  const pickFromImg = (img: HTMLImageElement | null): string => {
+    if (!img) return ""
+    const src = img.getAttribute("src") ?? ""
+    if (src) return src
+    const srcset = img.getAttribute("srcset") ?? ""
+    if (srcset) {
+      const first = srcset.split(",")[0]?.trim().split(" ")[0]
+      if (first) return first
+    }
+    return ""
+  }
+
+  const container =
+    (cell.querySelector('[data-testid="UserAvatar-Container"]') as HTMLElement | null) ??
+    (cell.querySelector('[data-testid="UserAvatar-Clickable"]') as HTMLElement | null)
+  const primaryImg =
+    (container?.querySelector('img[src*="profile_images"]') as HTMLImageElement | null) ??
+    (cell.querySelector('img[src*="profile_images"]') as HTMLImageElement | null) ??
+    (cell.querySelector('img[src*="twimg.com/profile_images"]') as HTMLImageElement | null)
+  const primarySrc = pickFromImg(primaryImg)
+  if (primarySrc) return primarySrc
+
+  const fallbackImg = (container?.querySelector("img") as HTMLImageElement | null) ?? (cell.querySelector("img") as HTMLImageElement | null)
+  const fallbackSrc = pickFromImg(fallbackImg)
+  if (fallbackSrc) return fallbackSrc
+
+  const styleTarget = container ?? (cell.querySelector("div[style*='background-image']") as HTMLElement | null)
+  const bg = styleTarget?.style?.backgroundImage ?? ""
+  const match = bg.match(/url\((['"]?)(.*?)\1\)/)
+  return match?.[2] ?? ""
+}
+
+function isBlueVerified(cell: Element): boolean {
+  if (cell.querySelector('[data-testid="icon-verified"]')) return true
+  const svg = cell.querySelector("svg[aria-label]")
+  if (!svg) return false
+  const label = svg.getAttribute("aria-label") ?? ""
+  return /verified|已验证|認證|認証/.test(label)
+}
+
 const RESERVED_PATHS = new Set([
   "home", "explore", "search", "settings", "compose", "messages",
   "notifications", "i", "intent", "share", "hashtag", "welcome",
@@ -123,15 +168,22 @@ function extractUserFromCell(cell: Element): UnfollowUser | null {
   }
   if (!id) return null
 
-  const img = cell.querySelector("img")
-  const avatar = img?.getAttribute("src") ?? ""
+  const avatar = getAvatarUrl(cell)
 
   let name = id
-  const skip = new Set(["关注了你", "關注了你", "正在关注", "Following", "Follow", "关注", "已关注"])
-  const spans = cell.querySelectorAll("span")
-  for (const s of spans) {
+  const skip = new Set(["关注了你", "關注了你", "正在关注", "Following", "Follow", "关注", "已关注", id])
+  const nameRoot = cell.querySelector('[data-testid="User-Name"]')
+  const nameSpans = nameRoot ? nameRoot.querySelectorAll("span") : cell.querySelectorAll("span")
+  for (const s of nameSpans) {
     const t = s.textContent?.trim()
-    if (t && !t.startsWith("@") && t.length > 0 && t.length < 80 && !skip.has(t) && !FOLLOWS_YOU_LABELS.some((l) => t === l || t.includes(l))) {
+    if (
+      t &&
+      !t.startsWith("@") &&
+      t.length > 0 &&
+      t.length < 80 &&
+      !skip.has(t) &&
+      !FOLLOWS_YOU_LABELS.some((l) => t === l || t.includes(l))
+    ) {
       name = t
       break
     }
@@ -140,24 +192,68 @@ function extractUserFromCell(cell: Element): UnfollowUser | null {
   const descEl = cell.querySelector('[data-testid="UserDescription"]') ?? cell.querySelector('[data-testid="UserBio"]')
   const description = (descEl?.textContent ?? "").trim().slice(0, 200) || ""
 
-  return { id, name, avatar, description }
+  const verified = isBlueVerified(cell)
+
+  return { id, name, avatar, description, verified }
 }
 
-function syncUnfollowStorage(toAdd: UnfollowUser[], toRemove: string[]): void {
-  chrome.storage.local.get(UNFOLLOW_STORAGE_KEY, (data) => {
-    let list: UnfollowUser[] = Array.isArray(data?.[UNFOLLOW_STORAGE_KEY]) ? data[UNFOLLOW_STORAGE_KEY] : []
-    const removeSet = new Set(toRemove)
-    list = list.filter((u) => !removeSet.has(u.id))
-    const byId = new Map(list.map((u) => [u.id, u]))
-    for (const u of toAdd) byId.set(u.id, u)
-    chrome.storage.local.set({ [UNFOLLOW_STORAGE_KEY]: Array.from(byId.values()) })
-  })
+function syncUnfollowStorage(
+  toAdd: UnfollowUser[],
+  toRemove: string[],
+  ownerId: string
+): void {
+  chrome.storage.local.get(
+    [UNFOLLOW_STORAGE_KEY, IGNORED_STORAGE_KEY],
+    (data) => {
+      let list: UnfollowUser[] = Array.isArray(data?.[UNFOLLOW_STORAGE_KEY])
+        ? data[UNFOLLOW_STORAGE_KEY]
+        : []
+      const ignored: IgnoredUser[] = Array.isArray(data?.[IGNORED_STORAGE_KEY])
+        ? data[IGNORED_STORAGE_KEY]
+        : []
+      const ignoredSet = new Set(
+        ignored
+          .filter((u) => u.ownerId === ownerId)
+          .map((u) => u.id)
+      )
+      const removeSet = new Set(toRemove)
+      list = list.filter(
+        (u) => !(u.ownerId === ownerId && removeSet.has(u.id))
+      )
+      const byId = new Map(
+        list.map((u) => [`${u.ownerId ?? "unknown"}:${u.id}`, u])
+      )
+      const merge = (base: UnfollowUser | undefined, next: UnfollowUser) => ({
+        id: next.id,
+        name: next.name || base?.name || next.id,
+        avatar: next.avatar || base?.avatar || "",
+        description: next.description || base?.description || "",
+        verified: next.verified ?? base?.verified,
+        followersCount: next.followersCount ?? base?.followersCount,
+        ownerId: ownerId,
+      })
+      for (const u of toAdd) {
+        if (ignoredSet.has(u.id)) continue
+        const key = `${ownerId}:${u.id}`
+        const existing = byId.get(key)
+        byId.set(key, merge(existing, u))
+      }
+      chrome.storage.local.set({
+        [UNFOLLOW_STORAGE_KEY]: Array.from(byId.values()),
+      })
+    }
+  )
 }
 
-function removeUnfollowFromStorage(id: string): void {
+
+function removeUnfollowFromStorage(id: string, ownerId: string): void {
   chrome.storage.local.get(UNFOLLOW_STORAGE_KEY, (data) => {
-    const list: UnfollowUser[] = Array.isArray(data?.[UNFOLLOW_STORAGE_KEY]) ? data[UNFOLLOW_STORAGE_KEY] : []
-    const next = list.filter((u) => u.id !== id)
+    const list: UnfollowUser[] = Array.isArray(data?.[UNFOLLOW_STORAGE_KEY])
+      ? data[UNFOLLOW_STORAGE_KEY]
+      : []
+    const next = list.filter(
+      (u) => !(u.id === id && u.ownerId === ownerId)
+    )
     chrome.storage.local.set({ [UNFOLLOW_STORAGE_KEY]: next })
   })
 }
@@ -215,6 +311,11 @@ function removeAlertIcon(cell: Element): void {
 
 function processUserCells(): void {
   if (!location.pathname.endsWith("/following")) return
+  const ownerId = getOwnerFromFollowingPath()
+  if (!ownerId) return
+  const currentAccount = refreshCurrentAccount()
+  if (!currentAccount) return
+  if (currentAccount !== ownerId) return
   const primaryColumn = document.querySelector('[data-testid="primaryColumn"]')
   document.querySelectorAll(`.${ALERT_ICON_CLASS}`).forEach((icon) => {
     if (primaryColumn?.contains(icon)) return
@@ -235,16 +336,15 @@ function processUserCells(): void {
     const btn = getFollowButton(cell)
     if (!btn) return
 
+    const user = extractUserFromCell(cell)
     if (hasFollowsYouLabel(cell)) {
-      const user = extractUserFromCell(cell)
       if (user) toRemove.push(user.id)
       removeAlertIcon(cell)
       return
     }
 
+    if (user) toAdd.push({ ...user, ownerId })
     if (cell.hasAttribute(ALERT_MARKER_ATTR)) return
-
-    const user = extractUserFromCell(cell)
     const parent = btn.parentElement
     if (!parent) return
 
@@ -252,10 +352,10 @@ function processUserCells(): void {
     const wrap = createAlertIcon()
     parent.insertBefore(wrap, btn)
     cell.setAttribute(ALERT_MARKER_ATTR, "1")
-    if (user) toAdd.push(user)
   })
 
-  if (toAdd.length > 0 || toRemove.length > 0) syncUnfollowStorage(toAdd, toRemove)
+  if (toAdd.length > 0 || toRemove.length > 0)
+    syncUnfollowStorage(toAdd, toRemove, ownerId)
 }
 
 let initialized = false
@@ -273,12 +373,185 @@ function isProfilePage(): boolean {
   return segs.length === 1 && !PROFILE_RESERVED.has(segs[0])
 }
 
+function getOwnerFromFollowingPath(): string | null {
+  const segs = location.pathname.split("/").filter(Boolean)
+  if (segs.length >= 2 && segs[1] === "following") return segs[0]
+  return null
+}
+
+function extractUsernameFromHref(href: string): string | null {
+  const path = href.replace(/^https?:\/\/[^/]+/, "").replace(/^\//, "")
+  const segs = path.split("/").filter(Boolean)
+  const first = segs[0] ?? ""
+  if (first && !PROFILE_RESERVED.has(first) && /^[a-zA-Z0-9_]+$/.test(first)) {
+    return first
+  }
+  return null
+}
+
+function getSidebarUsername(): string | null {
+  const profileLink =
+    (document.querySelector(
+      'a[data-testid="AppTabBar_Profile_Link"]'
+    ) as HTMLAnchorElement | null) ??
+    (document.querySelector(
+      'a[aria-label*="Profile"]'
+    ) as HTMLAnchorElement | null)
+  if (profileLink?.href) {
+    const fromHref = extractUsernameFromHref(profileLink.href)
+    if (fromHref) return fromHref
+  }
+  const nav = document.querySelector('[aria-label="Primary"]')
+  const links = nav?.querySelectorAll("a[href*='/']") ?? []
+  for (const link of Array.from(links)) {
+    const href = (link as HTMLAnchorElement).href
+    const fromHref = extractUsernameFromHref(href)
+    if (fromHref) return fromHref
+  }
+  const handle = document.querySelector('a[href^="/"][aria-label*="@"]')
+  const text = handle?.textContent ?? ""
+  const match = text.match(/@([a-zA-Z0-9_]+)/)
+  return match?.[1] ?? null
+}
+
+function refreshCurrentAccount(): string | null {
+  const id = getSidebarUsername()
+  if (id) {
+    chrome.storage.local.set({ [CURRENT_ACCOUNT_STORAGE_KEY]: id })
+    chrome.storage.local.get(UNFOLLOW_STORAGE_KEY, (data) => {
+      const list: UnfollowUser[] = Array.isArray(data?.[UNFOLLOW_STORAGE_KEY])
+        ? data[UNFOLLOW_STORAGE_KEY]
+        : []
+      let changed = false
+      const next = list.map((u) => {
+        if (!u.ownerId) {
+          changed = true
+          return { ...u, ownerId: id }
+        }
+        return u
+      })
+      if (changed) {
+        chrome.storage.local.set({ [UNFOLLOW_STORAGE_KEY]: next })
+      }
+    })
+  }
+  return id
+}
+
+function withCurrentAccount(fn: (id: string | null) => void): void {
+  chrome.storage.local.get(CURRENT_ACCOUNT_STORAGE_KEY, (data) => {
+    const id =
+      typeof data?.[CURRENT_ACCOUNT_STORAGE_KEY] === "string"
+        ? data[CURRENT_ACCOUNT_STORAGE_KEY]
+        : null
+    fn(id)
+  })
+}
+
 function checkProfileFollowsYou(): void {
   if (!isProfilePage()) return
   if (!document.querySelector(FOLLOWS_YOU_SELECTOR)) return
   const segs = location.pathname.split("/").filter(Boolean)
   const username = segs[0]
-  if (username) removeUnfollowFromStorage(username)
+  if (!username) return
+  withCurrentAccount((ownerId) => {
+    if (!ownerId) return
+    removeUnfollowFromStorage(username, ownerId)
+  })
+}
+
+function parseCountText(text: string): number | null {
+  const clean = text.replace(/,/g, "").trim()
+  const match = clean.match(/([\d.]+)\s*([KkMmBb万亿]?)/)
+  if (!match) return null
+  let n = Number.parseFloat(match[1])
+  if (Number.isNaN(n)) return null
+  const unit = match[2]
+  if (unit === "K" || unit === "k") n *= 1e3
+  else if (unit === "M" || unit === "m") n *= 1e6
+  else if (unit === "B" || unit === "b") n *= 1e9
+  else if (unit === "万") n *= 1e4
+  else if (unit === "亿") n *= 1e8
+  return Math.round(n)
+}
+
+function getProfileFollowersCount(username: string): number | null {
+  const primary = document.querySelector('[data-testid="primaryColumn"]') ?? document.body
+  const links = primary.querySelectorAll('a[href*="/followers"]')
+  for (const link of links) {
+    const href = link.getAttribute("href") ?? ""
+    if (!href.includes(`/${username}/followers`)) continue
+    const text = (link.textContent ?? "").trim()
+    const count = parseCountText(text)
+    if (typeof count === "number") return count
+  }
+  return null
+}
+
+function getProfileMetaContent(key: string): string {
+  const byProp = document.querySelector(`meta[property="${key}"]`) as HTMLMetaElement | null
+  if (byProp?.content) return byProp.content
+  const byName = document.querySelector(`meta[name="${key}"]`) as HTMLMetaElement | null
+  return byName?.content ?? ""
+}
+
+function getProfileAvatar(): string {
+  return getProfileMetaContent("og:image") || getProfileMetaContent("twitter:image")
+}
+
+function getProfileName(username: string): string {
+  const title = getProfileMetaContent("og:title") || document.title
+  const marker = `(@${username})`
+  if (title.includes(marker)) {
+    return title.split(marker)[0]?.trim() || username
+  }
+  const match = title.match(/^(.*?)\s+\(@/i)
+  if (match?.[1]) return match[1].trim()
+  return username
+}
+
+function isProfileVerified(): boolean {
+  if (document.querySelector('[data-testid="icon-verified"]')) return true
+  const svg = document.querySelector('svg[aria-label*="Verified"], svg[aria-label*="已验证"], svg[aria-label*="認證"], svg[aria-label*="認証"]')
+  return Boolean(svg)
+}
+
+function updateUserFromProfilePage(): void {
+  if (!isProfilePage()) return
+  const segs = location.pathname.split("/").filter(Boolean)
+  const username = segs[0]
+  if (!username) return
+  const followersCount = getProfileFollowersCount(username)
+  const avatar = getProfileAvatar()
+  const name = getProfileName(username)
+  const verified = isProfileVerified()
+  if (!avatar && !name && typeof followersCount !== "number") return
+  withCurrentAccount((ownerId) => {
+    if (!ownerId) return
+    chrome.storage.local.get(UNFOLLOW_STORAGE_KEY, (data) => {
+      const list: UnfollowUser[] = Array.isArray(data?.[UNFOLLOW_STORAGE_KEY])
+        ? data[UNFOLLOW_STORAGE_KEY]
+        : []
+      const idx = list.findIndex(
+        (u) => u.id === username && u.ownerId === ownerId
+      )
+      if (idx === -1) return
+      const existing = list[idx]
+      const next = {
+        ...existing,
+        name: name || existing.name,
+        avatar: avatar || existing.avatar,
+        verified: verified ? true : existing.verified,
+        followersCount:
+          typeof followersCount === "number"
+            ? followersCount
+            : existing.followersCount,
+      }
+      const updated = [...list]
+      updated[idx] = next
+      chrome.storage.local.set({ [UNFOLLOW_STORAGE_KEY]: updated })
+    })
+  })
 }
 
 function cleanup(): void {
@@ -308,21 +581,29 @@ function initOnFollowingPage(): void {
 function startUrlCheck(): void {
   if (urlCheckTimer) return
   urlCheckTimer = setInterval(() => {
+    refreshCurrentAccount()
     if (isFollowingPage()) {
       initOnFollowingPage()
     } else {
       initialized = false
       cleanup()
     }
-    if (isProfilePage()) checkProfileFollowsYou()
+    if (isProfilePage()) {
+      checkProfileFollowsYou()
+      updateUserFromProfilePage()
+    }
   }, 400)
 }
 
 function run(): void {
+  refreshCurrentAccount()
   if (isFollowingPage()) {
     initOnFollowingPage()
   }
-  if (isProfilePage()) checkProfileFollowsYou()
+  if (isProfilePage()) {
+    checkProfileFollowsYou()
+    updateUserFromProfilePage()
+  }
   startUrlCheck()
 }
 
